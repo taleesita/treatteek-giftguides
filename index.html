@@ -304,25 +304,15 @@ function linkify(text) {
 }
 function emailText(a) {
   var t = a.email || '';
-  if (settings.photoLink) t = t.replace("I'm happy to share photos, too.", 'Here are [some photos](' + settings.photoLink + '), too.');
+  if (settings.photoLink) t = t.replace("I'm happy to share photos, too.", 'Photos are here: ' + settings.photoLink);
   return t;
 }
-// Email markup: **bold**, [text](https://link), blank line = new paragraph.
-function mdLine(p, forClipboard) {
-  var cls = forClipboard ? '' : ' class="text-purple-700 underline" target="_blank" rel="noopener"';
-  return esc(p)
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, function(m, text, url) { return '<a href="' + url + '"' + cls + '>' + text + '</a>'; })
-    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-    .replace(/\n/g, '<br>');
-}
-function emailParas(a, forClipboard) {
-  return emailText(a).split(/\n\n+/).map(function(p) { return mdLine(p, forClipboard); });
-}
-function emailPlain(a) {
-  return emailText(a)
-    .replace(/\*\*\[([^\]]+)\]\([^)]+\)\*\*/g, '$1')        // linked title: just the title
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')          // other links: text (url)
-    .replace(/\*\*/g, '');
+function emailPlain(a) { return emailText(a).replace(/\*\*/g, ''); }
+function emailParas(a) {
+  // **title** becomes bold; blank lines split paragraphs
+  return emailText(a).split(/\n\n+/).map(function(p) {
+    return linkify(p).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+  });
 }
 function copyText(text, label) {
   var done = function() { toast(label + ' copied'); };
@@ -338,26 +328,23 @@ function fallbackCopy(text) {
 }
 function byId(id) { for (var i = 0; i < articles.length; i++) if (articles[i].id === id) return articles[i]; return null; }
 function copySubject(id) { var a = byId(id); if (a) copyText(a.subject || '', 'Subject'); }
-function copyEmail(id, opening) {
+function copyEmail(id) {
   var a = byId(id); if (!a) return;
   var plain = emailPlain(a);
-  // Rich copy keeps the bold title and the links when pasted into Mail or Gmail; plain text is the fallback.
-  var html = emailParas(a, true).map(function(p) { return '<div>' + p + '</div>'; }).join('<div><br></div>');
-  var msg = opening ? 'Email copied. Paste it into the draft (\u2318V)' : 'Email copied';
+  // Rich copy keeps the bold title when pasted into Gmail; plain text is the fallback.
+  var html = emailParas(a).map(function(p) { return '<div>' + p.replace(/ class="[^"]*"/g, '').replace(/ target="_blank" rel="noopener"/g, '') + '</div>'; }).join('<div><br></div>');
   if (navigator.clipboard && window.ClipboardItem && navigator.clipboard.write) {
     navigator.clipboard.write([new ClipboardItem({
       'text/html': new Blob([html], { type: 'text/html' }),
       'text/plain': new Blob([plain], { type: 'text/plain' })
-    })]).then(function() { toast(msg); }, function() { fallbackCopy(plain); toast(msg); });
-  } else { fallbackCopy(plain); toast(msg); }
+    })]).then(function() { toast('Email copied'); }, function() { copyText(plain, 'Email'); });
+  } else copyText(plain, 'Email');
 }
-// Drafts open with only the recipient and subject. The body is pasted in, so the links,
-// the From address and the TreatTeek signature all come from the mail app.
 function gmailUrl(a, to) {
-  return 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(to) + '&su=' + encodeURIComponent(a.subject || '');
+  return 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(to) + '&su=' + encodeURIComponent(a.subject || '') + '&body=' + encodeURIComponent(emailPlain(a));
 }
 function mailtoUrl(a, to) {
-  return 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(a.subject || '');
+  return 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(a.subject || '') + '&body=' + encodeURIComponent(emailPlain(a));
 }
 
 // ====== ACTIONS ======
@@ -477,12 +464,12 @@ function card(a) {
   h += '<button onclick="toggleEmail(\'' + id + '\')" class="px-3 py-1.5 bg-white border border-purple-200 text-purple-700 text-xs rounded-lg hover:bg-purple-50">' + (openEmail[a.id] ? 'Hide email' : 'Show email') + '</button>';
   h += '<button onclick="copyEmail(\'' + id + '\')" class="px-3 py-1.5 bg-purple-700 text-white text-xs rounded-lg hover:bg-purple-800">Copy email</button>';
   if (mails.length) {
-    h += '<a href="' + esc(mailtoUrl(a, mails[0])) + '" onclick="copyEmail(\'' + id + '\', true)" class="px-3 py-1.5 bg-white border border-purple-200 text-purple-700 text-xs rounded-lg hover:bg-purple-50">Copy &amp; open in Mail</a>';
-    h += '<a href="' + esc(gmailUrl(a, mails[0])) + '" onclick="copyEmail(\'' + id + '\', true)" target="_blank" rel="noopener" class="px-3 py-1.5 bg-white border border-purple-200 text-purple-700 text-xs rounded-lg hover:bg-purple-50">Copy &amp; open in Gmail</a>';
+    h += '<a href="' + esc(gmailUrl(a, mails[0])) + '" target="_blank" rel="noopener" class="px-3 py-1.5 bg-white border border-purple-200 text-purple-700 text-xs rounded-lg hover:bg-purple-50">Open in Gmail</a>';
+    h += '<a href="' + esc(mailtoUrl(a, mails[0])) + '" class="px-3 py-1.5 bg-white border border-purple-200 text-purple-700 text-xs rounded-lg hover:bg-purple-50">Open in Mail app</a>';
   }
   h += '</div>';
-  if (mails.length) h += '<div class="text-xs text-gray-400 mt-1.5 wrap-any">Copies the email, then opens a draft to ' + esc(mails[0]) + ' with the subject filled in. Paste the email in with \u2318V.</div>';
-  if (openEmail[a.id]) h += '<div class="email-body mt-3 bg-white border border-purple-100 rounded-lg p-4 text-sm text-gray-800 wrap-any">' + emailParas(a).map(function(p) { return '<p>' + p + '</p>'; }).join('') + '<p class="text-xs text-gray-400 italic">Your TreatTeek signature goes here (added by your mail app)</p></div>';
+  if (mails.length) h += '<div class="text-xs text-gray-400 mt-1.5 wrap-any">Opens a draft to ' + esc(mails[0]) + '. The bold title only carries over with Copy email.</div>';
+  if (openEmail[a.id]) h += '<div class="email-body mt-3 bg-white border border-purple-100 rounded-lg p-4 text-sm text-gray-800 wrap-any">' + emailParas(a).map(function(p) { return '<p>' + p + '</p>'; }).join('') + '</div>';
   h += '</div>';
 
   // tracking
