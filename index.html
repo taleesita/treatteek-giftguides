@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Gift Guides">
+<meta name="theme-color" content="#7e22ce">
+<meta name="robots" content="noindex, nofollow">
+<link rel="manifest" href="manifest.json">
+<title>TreatTeek Gift Guide Tracker</title>
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+body { font-family: system-ui, -apple-system, sans-serif; margin: 0 }
+.chip { display: inline-block; padding: 2px 9px; border-radius: 9999px; font-size: 0.68rem; font-weight: 600; white-space: nowrap }
+.filter-on { background: #7e22ce; color: #fff; border-color: #7e22ce }
+.email-body p { margin: 0 0 0.85em 0 }
+.email-body p:last-child { margin-bottom: 0 }
+.wrap-any { overflow-wrap: anywhere }
+#toast { transition: opacity 0.25s }
+</style>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+</head>
+<body class="bg-gradient-to-br from-amber-50 via-stone-50 to-purple-50 min-h-screen">
+
+<header class="bg-white border-b border-purple-100 sticky top-0 z-50" style="display:none">
+  <div class="max-w-4xl mx-auto px-4 py-3 flex justify-between items-center gap-3">
+    <div class="flex items-center gap-3 min-w-0">
+      <img src="icon-192.png" alt="" class="w-9 h-9 rounded-lg shrink-0">
+      <h1 class="text-lg sm:text-xl font-bold text-purple-700 truncate">TreatTeek Gift Guide Tracker</h1>
+    </div>
+    <div class="relative shrink-0">
+      <button onclick="toggleGearMenu()" id="gearBtn" class="text-gray-400 hover:text-purple-700 text-xl" title="Settings">&#9881;</button>
+      <div id="gearMenu" class="hidden absolute right-0 top-10 bg-white border rounded-lg shadow-lg py-2 w-64 z-50">
+        <div id="gearUser" class="px-4 py-2 text-xs text-gray-400 border-b wrap-any">Not signed in</div>
+        <button onclick="pickImport();toggleGearMenu()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-purple-50">Import or update the list</button>
+        <button onclick="toggleSettings();toggleGearMenu()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-purple-50">Photo folder link</button>
+        <button id="gearSignOut" onclick="doSignOut();toggleGearMenu()" class="hidden w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50">Sign out</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div id="appContent" style="display:none">
+
+<div id="settingsPanel" class="hidden bg-white border-b shadow-sm">
+  <div class="max-w-4xl mx-auto px-4 py-4">
+    <h3 class="font-bold text-gray-800 mb-1">Photo folder link</h3>
+    <p class="text-xs text-gray-500 mb-3">Paste a shared folder link and every email will say &ldquo;Photos are here: &hellip;&rdquo; instead of &ldquo;I'm happy to share photos, too.&rdquo; Leave it empty to keep the original line.</p>
+    <div class="flex flex-wrap gap-2">
+      <input id="photoLink" type="url" placeholder="https://drive.google.com/drive/folders/..." class="flex-1 min-w-0 px-3 py-2 border rounded-lg text-sm">
+      <button onclick="savePhotoLink()" class="px-4 py-2 bg-purple-700 text-white rounded-lg text-sm hover:bg-purple-800">Save</button>
+      <button onclick="toggleSettings()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm hover:bg-gray-200">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="bg-gradient-to-r from-purple-700 to-purple-900 text-white">
+  <div class="max-w-4xl mx-auto px-2 py-3 grid grid-cols-4 gap-1 text-center">
+    <button class="rounded-lg py-1 hover:bg-white/10" onclick="setStatusFilter('todo')"><div class="text-xs opacity-80">To send</div><div class="text-lg font-bold" id="sTodo">0</div></button>
+    <button class="rounded-lg py-1 hover:bg-white/10" onclick="setStatusFilter('sent')"><div class="text-xs opacity-80">Sent</div><div class="text-lg font-bold" id="sSent">0</div></button>
+    <button class="rounded-lg py-1 hover:bg-white/10" onclick="setStatusFilter('due')"><div class="text-xs opacity-80">Follow-up due</div><div class="text-lg font-bold text-amber-300" id="sDue">0</div></button>
+    <button class="rounded-lg py-1 hover:bg-white/10" onclick="setStatusFilter('replied')"><div class="text-xs opacity-80">Replies</div><div class="text-lg font-bold" id="sReplied">0</div></button>
+  </div>
+</div>
+
+<div class="bg-white border-b border-purple-100">
+  <div class="max-w-4xl mx-auto px-4 py-3 space-y-2">
+    <input id="search" type="search" oninput="onSearch(this.value)" placeholder="Search title, publication, author or contact" class="w-full px-3 py-2 border rounded-lg text-sm">
+    <div class="flex flex-wrap gap-1.5" id="statusFilters"></div>
+    <div class="flex flex-wrap gap-1.5" id="fitFilters"></div>
+  </div>
+</div>
+
+<main class="max-w-4xl mx-auto px-4 py-5" id="main"></main>
+<input type="file" id="importFile" accept=".json,application/json" class="hidden" onchange="onImportFile(this)">
+
+</div><!-- end appContent -->
+
+<div id="loginScreen" style="display:none" class="flex flex-col items-center justify-center py-20 px-4 text-center">
+  <img src="icon-192.png" alt="" class="w-24 h-24 rounded-2xl mb-5">
+  <h1 class="text-2xl font-bold text-purple-700 mb-2">TreatTeek Gift Guide Tracker</h1>
+  <p class="text-gray-500 text-sm mb-8">Sign in to see the outreach list</p>
+  <button onclick="doSignIn()" class="px-6 py-3 bg-purple-700 text-white rounded-lg text-sm font-medium hover:bg-purple-800 flex items-center gap-2">
+    <svg class="w-5 h-5" viewBox="0 0 24 24"><path fill="white" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="white" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="white" d="M5.84 14.09a6.6 6.6 0 0 1 0-4.18V7.07H2.18a11 11 0 0 0 0 9.86l3.66-2.84z"/><path fill="white" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38z"/></svg>
+    Sign in with Google</button>
+  <p id="loginMsg" class="text-sm text-red-600 mt-5 hidden"></p>
+</div>
+
+<div id="setupScreen" style="display:none" class="flex flex-col items-center justify-center py-20 px-4 text-center">
+  <img src="icon-192.png" alt="" class="w-24 h-24 rounded-2xl mb-5">
+  <h1 class="text-2xl font-bold text-purple-700 mb-2">Almost there</h1>
+  <p class="text-gray-600 text-sm max-w-md">This copy has no Firebase settings yet. Open <b>deploy.html</b>, paste your Firebase config and deploy; the live site will have sign-in turned on.</p>
+</div>
+
+<div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-sm px-4 py-2 rounded-lg shadow-lg opacity-0 pointer-events-none z-50"></div>
+
+<script>
+
+// ====== FIREBASE ======
+// deploy.html fills this in when it publishes the site.
+var firebaseConfig = /*FIREBASE_CONFIG_START*/{
+  "apiKey": "AIzaSyCQ9d1pYccHK_V60dScGpahGSNy2-4D7Mc",
+  "authDomain": "treatteek-giftguides.firebaseapp.com",
+  "projectId": "treatteek-giftguides",
+  "storageBucket": "treatteek-giftguides.firebasestorage.app",
+  "messagingSenderId": "78126672542",
+  "appId": "1:78126672542:web:21acdcbb118658f6b5a98f"
+}/*FIREBASE_CONFIG_END*/;
+var ALLOWED_EMAILS = ['taly.matiteyahu@gmail.com'];
+var FOLLOW_UP_AFTER_DAYS = 7;
+var CONFIGURED = firebaseConfig.apiKey && firebaseConfig.apiKey.indexOf('__') !== 0;
+
+var db = null, auth = null, currentUser = null;
+var articles = [];      // the list, kept only in Firestore (never in this file)
+var tracking = {};        // id -> { sent, follow, replied, note }
+var settings = { photoLink: '' };
+var openEmail = {};     // id -> true while the email draft is expanded
+var statusFilter = 'all', fitFilter = 'all', searchText = '';
+var _dataLoaded = false, _unsub = null, _renderQueued = false;
+
+try {
+  statusFilter = localStorage.getItem('ttStatusFilter') || 'all';
+  fitFilter = localStorage.getItem('ttFitFilter') || 'all';
+} catch (e) {}
+
+function el(id) { return document.getElementById(id); }
+function showOnly(which) {
+  el('appContent').style.display = which === 'app' ? '' : 'none';
+  document.querySelector('header').style.display = which === 'app' ? '' : 'none';
+  el('loginScreen').style.display = which === 'login' ? 'flex' : 'none';
+  el('setupScreen').style.display = which === 'setup' ? 'flex' : 'none';
+}
+function toggleGearMenu() { el('gearMenu').classList.toggle('hidden'); }
+document.addEventListener('click', function(e) {
+  var menu = el('gearMenu'), btn = el('gearBtn');
+  if (menu && !menu.classList.contains('hidden') && !menu.contains(e.target) && e.target !== btn) menu.classList.add('hidden');
+});
+function toast(msg) {
+  var t = el('toast');
+  t.textContent = msg; t.style.opacity = '1';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function() { t.style.opacity = '0'; }, 1800);
+}
+
+if (!CONFIGURED) {
+  showOnly('setup');
+} else {
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+  db.settings({ experimentalForceLongPolling: true });
+  db.enablePersistence({ synchronizeTabs: true }).catch(function(err) { console.log('Offline persistence error:', err.code); });
+  auth = firebase.auth();
+  auth.onAuthStateChanged(function(user) {
+    if (user) {
+      if (ALLOWED_EMAILS.indexOf((user.email || '').toLowerCase()) < 0) {
+        auth.signOut();
+        showLoginMsg('Access denied. This tracker is private.');
+        return;
+      }
+      currentUser = user;
+      el('gearUser').textContent = user.email;
+      el('gearSignOut').classList.remove('hidden');
+      showOnly('app');
+      loadFromFirestore();
+    } else {
+      currentUser = null;
+      articles = []; tracking = {}; _dataLoaded = false;
+      if (_unsub) { _unsub(); _unsub = null; }
+      el('gearUser').textContent = 'Not signed in';
+      el('gearSignOut').classList.add('hidden');
+      showOnly('login');
+    }
+  });
+}
+
+function showLoginMsg(msg) { var m = el('loginMsg'); m.textContent = msg; m.classList.remove('hidden'); }
+function doSignIn() {
+  el('loginMsg').classList.add('hidden');
+  var provider = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(provider).catch(function(err) { showLoginMsg(err.message); });
+}
+function doSignOut() { auth.signOut(); }
+
+// ====== FIRESTORE ======
+// data/articles : { items: JSON string of the list }
+// data/status   : one field per article id -> { sent, follow, replied, note }
+// data/settings : { photoLink }
+function loadFromFirestore() {
+  if (!currentUser) return;
+  Promise.all([
+    db.collection('data').doc('articles').get(),
+    db.collection('data').doc('status').get(),
+    db.collection('data').doc('settings').get()
+  ]).then(function(docs) {
+    if (docs[0].exists) { try { articles = JSON.parse(docs[0].data().items) || []; } catch (e) { articles = []; } }
+    tracking = docs[1].exists ? readStatus(docs[1].data()) : {};
+    if (docs[2].exists) settings.photoLink = docs[2].data().photoLink || '';
+    _dataLoaded = true;
+    render();
+    startRealtimeSync();
+  }).catch(function(err) {
+    console.log('Firestore load error:', err);
+    _dataLoaded = true;
+    el('main').innerHTML = '<div class="bg-white rounded-xl border border-red-200 p-6 text-sm text-red-700">Could not load the list: ' + esc(err.message || String(err)) + '<br><br>If this says "Missing or insufficient permissions", check the Firestore rules in the Firebase console.</div>';
+  });
+}
+function readStatus(data) {
+  var out = {};
+  Object.keys(data || {}).forEach(function(k) { if (data[k] && typeof data[k] === 'object') out[k] = data[k]; });
+  return out;
+}
+function startRealtimeSync() {
+  if (_unsub) _unsub();
+  _unsub = db.collection('data').doc('status').onSnapshot(function(snap) {
+    if (snap.metadata && snap.metadata.hasPendingWrites) return;
+    if (!snap.exists) return;
+    tracking = readStatus(snap.data());
+    queueRender();
+  }, function(err) { console.log('Sync error:', err); });
+}
+function st(id) { return tracking[id] || {}; }
+function saveStatus(id, patch) {
+  var cur = Object.assign({ sent: '', follow: '', replied: '', note: '' }, tracking[id] || {}, patch);
+  tracking[id] = cur;
+  var doc = {}; doc[id] = cur; doc.updatedAt = Date.now();
+  if (currentUser) db.collection('data').doc('status').set(doc, { merge: true }).catch(function(err) { toast('Could not save: ' + err.message); });
+  render();
+}
+
+// ====== IMPORT ======
+function pickImport() { el('importFile').value = ''; el('importFile').click(); }
+function onImportFile(input) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function() {
+    var list;
+    try {
+      var parsed = JSON.parse(reader.result);
+      list = Array.isArray(parsed) ? parsed : parsed.articles;
+      if (!Array.isArray(list) || !list.length || !list[0].id || !list[0].title) throw new Error('not the list file');
+    } catch (e) { toast('That file is not the TreatTeek list.'); return; }
+    db.collection('data').doc('articles').set({ items: JSON.stringify(list), count: list.length, updatedAt: Date.now() }).then(function() {
+      articles = list;
+      render();
+      toast('Imported ' + list.length + ' articles. Your sent dates were kept.');
+    }).catch(function(err) { toast('Import failed: ' + err.message); });
+  };
+  reader.readAsText(file);
+}
+
+// ====== SETTINGS ======
+function toggleSettings() {
+  var p = el('settingsPanel');
+  p.classList.toggle('hidden');
+  if (!p.classList.contains('hidden')) el('photoLink').value = settings.photoLink || '';
+}
+function savePhotoLink() {
+  var v = el('photoLink').value.trim();
+  if (v && !/^https?:\/\//i.test(v)) { toast('The link should start with https://'); return; }
+  settings.photoLink = v;
+  db.collection('data').doc('settings').set({ photoLink: v, updatedAt: Date.now() }, { merge: true });
+  el('settingsPanel').classList.add('hidden');
+  render();
+  toast(v ? 'Photo link added to every email.' : 'Photo link removed.');
+}
+
+// ====== HELPERS ======
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function today() {
+  var d = new Date();
+  return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+}
+function daysSince(ymd) {
+  if (!ymd) return 0;
+  var p = ymd.split('-'); var then = new Date(+p[0], +p[1] - 1, +p[2]); var t = today().split('-'); var now = new Date(+t[0], +t[1] - 1, +t[2]);
+  return Math.round((now - then) / 86400000);
+}
+function niceDate(ymd) {
+  if (!ymd) return '';
+  var p = ymd.split('-'); var m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return m[+p[1] - 1] + ' ' + (+p[2]);
+}
+function stateOf(a) {
+  var s = st(a.id);
+  if (s.replied) return 'replied';
+  if (s.follow) return 'followed';
+  if (s.sent) return daysSince(s.sent) >= FOLLOW_UP_AFTER_DAYS ? 'due' : 'sent';
+  return 'todo';
+}
+function emailsIn(text) { return (text || '').match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || []; }
+function linkify(text) {
+  // text is escaped first, then URLs and email addresses become links
+  return esc(text).replace(/(https?:\/\/[^\s<]+[^\s<.,;:)])|([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, function(m, url, mail) {
+    if (url) return '<a class="text-purple-700 underline wrap-any" target="_blank" rel="noopener" href="' + url + '">' + url + '</a>';
+    return '<a class="text-purple-700 underline wrap-any" href="mailto:' + mail + '">' + mail + '</a>';
+  });
+}
+function emailText(a) {
+  var t = a.email || '';
+  if (settings.photoLink) t = t.replace("I'm happy to share photos, too.", 'Photos are here: ' + settings.photoLink);
+  return t;
+}
+function emailPlain(a) { return emailText(a).replace(/\*\*/g, ''); }
+function emailParas(a) {
+  // **title** becomes bold; blank lines split paragraphs
+  return emailText(a).split(/\n\n+/).map(function(p) {
+    return linkify(p).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+  });
+}
+function copyText(text, label) {
+  var done = function() { toast(label + ' copied'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function() { fallbackCopy(text); done(); });
+  else { fallbackCopy(text); done(); }
+}
+function fallbackCopy(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  document.body.removeChild(ta);
+}
+function byId(id) { for (var i = 0; i < articles.length; i++) if (articles[i].id === id) return articles[i]; return null; }
+function copySubject(id) { var a = byId(id); if (a) copyText(a.subject || '', 'Subject'); }
+function copyEmail(id) {
+  var a = byId(id); if (!a) return;
+  var plain = emailPlain(a);
+  // Rich copy keeps the bold title when pasted into Gmail; plain text is the fallback.
+  var html = emailParas(a).map(function(p) { return '<div>' + p.replace(/ class="[^"]*"/g, '').replace(/ target="_blank" rel="noopener"/g, '') + '</div>'; }).join('<div><br></div>');
+  if (navigator.clipboard && window.ClipboardItem && navigator.clipboard.write) {
+    navigator.clipboard.write([new ClipboardItem({
+      'text/html': new Blob([html], { type: 'text/html' }),
+      'text/plain': new Blob([plain], { type: 'text/plain' })
+    })]).then(function() { toast('Email copied'); }, function() { copyText(plain, 'Email'); });
+  } else copyText(plain, 'Email');
+}
+function gmailUrl(a, to) {
+  return 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(to) + '&su=' + encodeURIComponent(a.subject || '') + '&body=' + encodeURIComponent(emailPlain(a));
+}
+function mailtoUrl(a, to) {
+  return 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(a.subject || '') + '&body=' + encodeURIComponent(emailPlain(a));
+}
+
+// ====== ACTIONS ======
+function markSent(id) { saveStatus(id, { sent: today() }); toast('Marked as sent today'); }
+function markFollow(id) { saveStatus(id, { follow: today() }); toast('Follow-up marked as sent today'); }
+function markReplied(id) { saveStatus(id, { replied: today() }); toast('Reply logged'); }
+function setDate(id, field, value) { if (!value) { clearField(id, field); return; } var p = {}; p[field] = value; saveStatus(id, p); }
+function clearField(id, field) {
+  var p = {}; p[field] = '';
+  if (field === 'sent') { p.follow = ''; p.replied = ''; }   // nothing can outlive the first email
+  saveStatus(id, p);
+}
+function saveNote(id, value) { if ((st(id).note || '') !== value) saveStatus(id, { note: value }); }
+function toggleEmail(id) { openEmail[id] = !openEmail[id]; render(); }
+function setStatusFilter(v) { statusFilter = v; try { localStorage.setItem('ttStatusFilter', v); } catch (e) {} render(); }
+function setFitFilter(v) { fitFilter = v; try { localStorage.setItem('ttFitFilter', v); } catch (e) {} render(); }
+function onSearch(v) { searchText = v.toLowerCase(); render(); }
+
+// ====== RENDER ======
+function queueRender() {
+  // do not redraw under the cursor while a note or date is being edited
+  var ae = document.activeElement;
+  if (ae && el('main').contains(ae) && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT')) { _renderQueued = true; return; }
+  render();
+}
+document.addEventListener('focusout', function() { if (_renderQueued) { _renderQueued = false; setTimeout(render, 0); } });
+
+var STATUS_FILTERS = [['all', 'All'], ['todo', 'To send'], ['sent', 'Sent'], ['due', 'Follow-up due'], ['followed', 'Followed up'], ['replied', 'Replied']];
+var FIT_FILTERS = [['all', 'Any fit'], ['Strong', 'Strong'], ['Good', 'Good'], ['Long shot', 'Long shot']];
+var FIT_CHIP = { 'Strong': 'bg-green-100 text-green-800', 'Good': 'bg-amber-100 text-amber-800', 'Long shot': 'bg-gray-100 text-gray-600' };
+
+function matches(a) {
+  var state = stateOf(a);
+  if (statusFilter === 'sent') { if (!st(a.id).sent) return false; }
+  else if (statusFilter !== 'all' && state !== statusFilter) return false;
+  if (fitFilter !== 'all' && a.fit !== fitFilter) return false;
+  if (searchText) {
+    var hay = [a.title, a.pub, a.author, a.contact, a.notes].join(' ').toLowerCase();
+    if (hay.indexOf(searchText) < 0) return false;
+  }
+  return true;
+}
+
+function render() {
+  if (!_dataLoaded) return;
+  var counts = { todo: 0, sent: 0, due: 0, replied: 0, followed: 0 };
+  articles.forEach(function(a) {
+    var s = stateOf(a);
+    if (st(a.id).sent) counts.sent++;
+    if (s === 'todo') counts.todo++;
+    if (s === 'due') counts.due++;
+    if (s === 'followed') counts.followed++;
+    if (s === 'replied') counts.replied++;
+  });
+  el('sTodo').textContent = counts.todo;
+  el('sSent').textContent = counts.sent;
+  el('sDue').textContent = counts.due;
+  el('sReplied').textContent = counts.replied;
+
+  el('statusFilters').innerHTML = STATUS_FILTERS.map(function(f) {
+    return '<button onclick="setStatusFilter(\'' + f[0] + '\')" class="px-3 py-1 text-xs rounded-full border ' + (statusFilter === f[0] ? 'filter-on' : 'bg-white text-gray-600 border-gray-300 hover:border-purple-400') + '">' + f[1] + '</button>';
+  }).join('');
+  el('fitFilters').innerHTML = FIT_FILTERS.map(function(f) {
+    return '<button onclick="setFitFilter(\'' + f[0] + '\')" class="px-3 py-1 text-xs rounded-full border ' + (fitFilter === f[0] ? 'filter-on' : 'bg-white text-gray-600 border-gray-300 hover:border-purple-400') + '">' + f[1] + '</button>';
+  }).join('');
+
+  if (!articles.length) {
+    el('main').innerHTML = '<div class="bg-white rounded-xl border border-purple-100 p-8 text-center">' +
+      '<h2 class="text-lg font-bold text-gray-800 mb-2">No list yet</h2>' +
+      '<p class="text-sm text-gray-600 mb-5">Import <b>treatteek-data.json</b> from your app folder. The list is stored in your private database, not in this page.</p>' +
+      '<button onclick="pickImport()" class="px-5 py-2.5 bg-purple-700 text-white rounded-lg text-sm font-medium hover:bg-purple-800">Import the list</button></div>';
+    return;
+  }
+
+  var shown = articles.filter(matches);
+  var h = '<div class="text-xs text-gray-500 mb-3">Showing ' + shown.length + ' of ' + articles.length + '</div>';
+  if (!shown.length) h += '<div class="bg-white rounded-xl border border-purple-100 p-8 text-center text-sm text-gray-500">Nothing matches these filters.</div>';
+  h += shown.map(card).join('');
+  el('main').innerHTML = h;
+}
+
+function card(a) {
+  var s = st(a.id), state = stateOf(a), id = esc(a.id);
+  var mails = emailsIn(a.contact);
+  var border = state === 'due' ? 'border-amber-300' : state === 'replied' ? 'border-green-300' : 'border-purple-100';
+  var h = '<article class="bg-white rounded-xl border ' + border + ' shadow-sm mb-4 overflow-hidden">';
+
+  // header
+  h += '<div class="p-4 pb-3">';
+  h += '<div class="flex flex-wrap items-center gap-1.5 mb-2">';
+  h += '<span class="chip ' + (FIT_CHIP[a.fit] || FIT_CHIP['Long shot']) + '">' + esc(a.fit) + ' fit</span>';
+  if (s.sent) h += '<span class="chip bg-purple-100 text-purple-800">Sent ' + niceDate(s.sent) + '</span>';
+  if (s.follow) h += '<span class="chip bg-indigo-100 text-indigo-800">Follow-up ' + niceDate(s.follow) + '</span>';
+  if (state === 'due') h += '<span class="chip bg-amber-200 text-amber-900">Follow-up due</span>';
+  if (s.replied) h += '<span class="chip bg-green-100 text-green-800">Replied ' + niceDate(s.replied) + '</span>';
+  h += '</div>';
+  h += '<a href="' + esc(a.link) + '" target="_blank" rel="noopener" class="block text-base font-bold text-gray-900 hover:text-purple-700 leading-snug">' + esc(a.title) + ' <span class="text-purple-500 text-sm">&#8599;</span></a>';
+  h += '<div class="text-sm text-gray-600 mt-1"><span class="font-medium text-gray-800">' + esc(a.pub) + '</span> &middot; ' + esc(a.author) + '</div>';
+  h += '<div class="text-xs text-gray-500 mt-0.5">' + esc(a.date) + '</div>';
+  h += '</div>';
+
+  // contact + notes
+  h += '<div class="px-4 pb-3 grid sm:grid-cols-2 gap-3 text-sm">';
+  h += '<div><div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Contact</div><div class="text-gray-800 whitespace-pre-line wrap-any">' + linkify(a.contact) + '</div>';
+  if (a.source) h += '<details class="mt-1.5"><summary class="text-xs text-gray-400 cursor-pointer">Where this came from</summary><div class="text-xs text-gray-500 mt-1 wrap-any">' + esc(a.source) + '</div></details>';
+  h += '</div>';
+  h += '<div><div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Notes</div><div class="text-gray-700 wrap-any">' + esc(a.notes) + '</div></div>';
+  h += '</div>';
+
+  // email draft
+  h += '<div class="border-t border-purple-50 bg-purple-50/40 px-4 py-3">';
+  h += '<div class="flex flex-wrap items-start gap-2">';
+  h += '<div class="flex-1 min-w-0"><div class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Subject</div><div class="text-sm text-gray-900 wrap-any">' + esc(a.subject) + '</div></div>';
+  h += '<button onclick="copySubject(\'' + id + '\')" class="px-3 py-1.5 bg-white border border-purple-200 text-purple-700 text-xs rounded-lg hover:bg-purple-50">Copy subject</button>';
+  h += '</div>';
+  h += '<div class="flex flex-wrap gap-2 mt-3">';
+  h += '<button onclick="toggleEmail(\'' + id + '\')" class="px-3 py-1.5 bg-white border border-purple-200 text-purple-700 text-xs rounded-lg hover:bg-purple-50">' + (openEmail[a.id] ? 'Hide email' : 'Show email') + '</button>';
+  h += '<button onclick="copyEmail(\'' + id + '\')" class="px-3 py-1.5 bg-purple-700 text-white text-xs rounded-lg hover:bg-purple-800">Copy email</button>';
+  if (mails.length) {
+    h += '<a href="' + esc(gmailUrl(a, mails[0])) + '" target="_blank" rel="noopener" class="px-3 py-1.5 bg-white border border-purple-200 text-purple-700 text-xs rounded-lg hover:bg-purple-50">Open in Gmail</a>';
+    h += '<a href="' + esc(mailtoUrl(a, mails[0])) + '" class="px-3 py-1.5 bg-white border border-purple-200 text-purple-700 text-xs rounded-lg hover:bg-purple-50">Open in Mail app</a>';
+  }
+  h += '</div>';
+  if (mails.length) h += '<div class="text-xs text-gray-400 mt-1.5 wrap-any">Opens a draft to ' + esc(mails[0]) + '. The bold title only carries over with Copy email.</div>';
+  if (openEmail[a.id]) h += '<div class="email-body mt-3 bg-white border border-purple-100 rounded-lg p-4 text-sm text-gray-800 wrap-any">' + emailParas(a).map(function(p) { return '<p>' + p + '</p>'; }).join('') + '</div>';
+  h += '</div>';
+
+  // tracking
+  h += '<div class="border-t border-purple-50 px-4 py-3 space-y-2.5">';
+  h += trackRow(a, 'sent', 'First email', 'Mark sent', 'markSent', true);
+  h += trackRow(a, 'follow', 'Follow-up', 'Mark follow-up sent', 'markFollow', !!s.sent);
+  h += trackRow(a, 'replied', 'Reply', 'Got a reply', 'markReplied', !!s.sent);
+  h += '<textarea rows="1" placeholder="Your notes (what they said, what to do next)" onchange="saveNote(\'' + id + '\', this.value)" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">' + esc(s.note || '') + '</textarea>';
+  h += '</div>';
+
+  h += '</article>';
+  return h;
+}
+
+function trackRow(a, field, label, btnLabel, fn, enabled) {
+  var s = st(a.id), id = esc(a.id), v = s[field] || '';
+  var h = '<div class="flex flex-wrap items-center gap-2 min-h-[34px]">';
+  h += '<div class="w-24 text-xs font-semibold text-gray-500 uppercase tracking-wide">' + label + '</div>';
+  if (v) {
+    h += '<span class="text-green-700 text-sm font-medium">&#10003;</span>';
+    h += '<input type="date" value="' + esc(v) + '" max="' + today() + '" onchange="setDate(\'' + id + '\', \'' + field + '\', this.value)" class="px-2 py-1 border border-gray-200 rounded-lg text-sm">';
+    h += '<button onclick="clearField(\'' + id + '\', \'' + field + '\')" class="text-xs text-gray-400 hover:text-red-500 underline">Undo</button>';
+  } else if (enabled) {
+    h += '<button onclick="' + fn + '(\'' + id + '\')" class="px-3 py-1.5 ' + (field === 'sent' ? 'bg-purple-700 text-white hover:bg-purple-800' : 'bg-white border border-purple-200 text-purple-700 hover:bg-purple-50') + ' text-xs rounded-lg">' + btnLabel + '</button>';
+    if (field === 'follow' && stateOf(a) === 'due') h += '<span class="text-xs text-amber-700">Sent ' + daysSince(s.sent) + ' days ago</span>';
+  } else {
+    h += '<span class="text-xs text-gray-400">After the first email</span>';
+  }
+  h += '</div>';
+  return h;
+}
+
+</script>
+<script>
+if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+  navigator.serviceWorker.register('sw.js').then(function(reg) {
+    console.log('SW registered');
+  }).catch(function(err) { console.log('SW error:', err); });
+}
+</script>
+</body>
+</html>
