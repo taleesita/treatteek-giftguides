@@ -121,6 +121,8 @@ var articles = [];      // the list, kept only in Firestore (never in this file)
 var tracking = {};        // id -> { sent, follow, replied, note }
 var settings = { photoLink: '' };
 var openEmail = {};     // id -> true while the email draft is expanded
+var edits = {};         // id -> { contact } typed in on the site; wins over the imported list
+var editingContact = {}; // id -> true while the contact box is open
 var statusFilter = 'all', fitFilter = 'all', searchText = '';
 var _dataLoaded = false, _unsub = null, _renderQueued = false;
 
@@ -191,16 +193,19 @@ function doSignOut() { auth.signOut(); }
 // data/articles : { items: JSON string of the list }
 // data/status   : one field per article id -> { sent, follow, replied, note }
 // data/settings : { photoLink }
+// data/edits    : one field per article id -> { contact }
 function loadFromFirestore() {
   if (!currentUser) return;
   Promise.all([
     db.collection('data').doc('articles').get(),
     db.collection('data').doc('status').get(),
-    db.collection('data').doc('settings').get()
+    db.collection('data').doc('settings').get(),
+    db.collection('data').doc('edits').get()
   ]).then(function(docs) {
     if (docs[0].exists) { try { articles = JSON.parse(docs[0].data().items) || []; } catch (e) { articles = []; } }
     tracking = docs[1].exists ? readStatus(docs[1].data()) : {};
     if (docs[2].exists) settings.photoLink = docs[2].data().photoLink || '';
+    edits = docs[3].exists ? readStatus(docs[3].data()) : {};
     _dataLoaded = true;
     render();
     startRealtimeSync();
@@ -226,7 +231,7 @@ function startRealtimeSync() {
 }
 function st(id) { return tracking[id] || {}; }
 function saveStatus(id, patch) {
-  var cur = Object.assign({ sent: '', follow: '', replied: '', note: '' }, tracking[id] || {}, patch);
+  var cur = Object.assign({ sent: '', follow: '', replied: '', note: '', skipped: '' }, tracking[id] || {}, patch);
   tracking[id] = cur;
   var doc = {}; doc[id] = cur; doc.updatedAt = Date.now();
   if (currentUser) db.collection('data').doc('status').set(doc, { merge: true }).catch(function(err) { toast('Could not save: ' + err.message); });
@@ -289,6 +294,7 @@ function niceDate(ymd) {
 }
 function stateOf(a) {
   var s = st(a.id);
+  if (s.skipped) return 'skipped';
   if (s.replied) return 'replied';
   if (s.follow) return 'followed';
   if (s.sent) return daysSince(s.sent) >= FOLLOW_UP_AFTER_DAYS ? 'due' : 'sent';
@@ -351,6 +357,8 @@ function mailtoUrl(a, to) {
 function markSent(id) { saveStatus(id, { sent: today() }); toast('Marked as sent today'); }
 function markFollow(id) { saveStatus(id, { follow: today() }); toast('Follow-up marked as sent today'); }
 function markReplied(id) { saveStatus(id, { replied: today() }); toast('Reply logged'); }
+function markSkipped(id) { saveStatus(id, { skipped: today() }); toast('Skipped. Find it under the Skipped filter.'); }
+function unskip(id) { saveStatus(id, { skipped: '' }); toast('Back on the list'); }
 function setDate(id, field, value) { if (!value) { clearField(id, field); return; } var p = {}; p[field] = value; saveStatus(id, p); }
 function clearField(id, field) {
   var p = {}; p[field] = '';
@@ -359,6 +367,26 @@ function clearField(id, field) {
 }
 function saveNote(id, value) { if ((st(id).note || '') !== value) saveStatus(id, { note: value }); }
 function toggleEmail(id) { openEmail[id] = !openEmail[id]; render(); }
+function contactOf(a) { var e = edits[a.id]; return e && typeof e.contact === 'string' ? e.contact : a.contact; }
+function toggleContactEdit(id) { editingContact[id] = !editingContact[id]; render(); if (editingContact[id]) { var t = el('contact-' + id); if (t) t.focus(); } }
+function saveContact(id) {
+  var v = el('contact-' + id).value.trim();
+  var a = byId(id); if (!a) return;
+  var doc = {};
+  if (v === (a.contact || '').trim()) { delete edits[id]; doc[id] = firebase.firestore.FieldValue.delete(); }
+  else { edits[id] = { contact: v, updatedAt: Date.now() }; doc[id] = edits[id]; }
+  editingContact[id] = false;
+  db.collection('data').doc('edits').set(doc, { merge: true }).catch(function(err) { toast('Could not save: ' + err.message); });
+  render();
+  toast('Contact saved');
+}
+function resetContact(id) {
+  delete edits[id]; editingContact[id] = false;
+  var doc = {}; doc[id] = firebase.firestore.FieldValue.delete();
+  db.collection('data').doc('edits').set(doc, { merge: true }).catch(function(err) { toast('Could not save: ' + err.message); });
+  render();
+  toast('Back to the original contact');
+}
 function setStatusFilter(v) { statusFilter = v; try { localStorage.setItem('ttStatusFilter', v); } catch (e) {} render(); }
 function setFitFilter(v) { fitFilter = v; try { localStorage.setItem('ttFitFilter', v); } catch (e) {} render(); }
 function onSearch(v) { searchText = v.toLowerCase(); render(); }
@@ -372,17 +400,18 @@ function queueRender() {
 }
 document.addEventListener('focusout', function() { if (_renderQueued) { _renderQueued = false; setTimeout(render, 0); } });
 
-var STATUS_FILTERS = [['all', 'All'], ['todo', 'To send'], ['sent', 'Sent'], ['due', 'Follow-up due'], ['followed', 'Followed up'], ['replied', 'Replied']];
+var STATUS_FILTERS = [['all', 'All'], ['todo', 'To send'], ['sent', 'Sent'], ['due', 'Follow-up due'], ['followed', 'Followed up'], ['replied', 'Replied'], ['skipped', 'Skipped']];
 var FIT_FILTERS = [['all', 'Any fit'], ['Strong', 'Strong'], ['Good', 'Good'], ['Long shot', 'Long shot']];
 var FIT_CHIP = { 'Strong': 'bg-green-100 text-green-800', 'Good': 'bg-amber-100 text-amber-800', 'Long shot': 'bg-gray-100 text-gray-600' };
 
 function matches(a) {
   var state = stateOf(a);
+  if (state === 'skipped' && statusFilter !== 'skipped') return false;   // skipped cards only show under Skipped
   if (statusFilter === 'sent') { if (!st(a.id).sent) return false; }
   else if (statusFilter !== 'all' && state !== statusFilter) return false;
   if (fitFilter !== 'all' && a.fit !== fitFilter) return false;
   if (searchText) {
-    var hay = [a.title, a.pub, a.author, a.contact, a.notes].join(' ').toLowerCase();
+    var hay = [a.title, a.pub, a.author, contactOf(a), a.notes].join(' ').toLowerCase();
     if (hay.indexOf(searchText) < 0) return false;
   }
   return true;
@@ -428,9 +457,9 @@ function render() {
 
 function card(a) {
   var s = st(a.id), state = stateOf(a), id = esc(a.id);
-  var mails = emailsIn(a.contact);
+  var mails = emailsIn(contactOf(a));
   var border = state === 'due' ? 'border-amber-300' : state === 'replied' ? 'border-green-300' : 'border-purple-100';
-  var h = '<article class="bg-white rounded-xl border ' + border + ' shadow-sm mb-4 overflow-hidden">';
+  var h = '<article class="bg-white rounded-xl border ' + border + ' shadow-sm mb-4 overflow-hidden' + (state === 'skipped' ? ' opacity-70' : '') + '">';
 
   // header
   h += '<div class="p-4 pb-3">';
@@ -440,6 +469,7 @@ function card(a) {
   if (s.follow) h += '<span class="chip bg-indigo-100 text-indigo-800">Follow-up ' + niceDate(s.follow) + '</span>';
   if (state === 'due') h += '<span class="chip bg-amber-200 text-amber-900">Follow-up due</span>';
   if (s.replied) h += '<span class="chip bg-green-100 text-green-800">Replied ' + niceDate(s.replied) + '</span>';
+  if (s.skipped) h += '<span class="chip bg-gray-200 text-gray-700">Skipped ' + niceDate(s.skipped) + '</span>';
   h += '</div>';
   h += '<a href="' + esc(a.link) + '" target="_blank" rel="noopener" class="block text-base font-bold text-gray-900 hover:text-purple-700 leading-snug">' + esc(a.title) + ' <span class="text-purple-500 text-sm">&#8599;</span></a>';
   h += '<div class="text-sm text-gray-600 mt-1"><span class="font-medium text-gray-800">' + esc(a.pub) + '</span> &middot; ' + esc(a.author) + '</div>';
@@ -448,7 +478,18 @@ function card(a) {
 
   // contact + notes
   h += '<div class="px-4 pb-3 grid sm:grid-cols-2 gap-3 text-sm">';
-  h += '<div><div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Contact</div><div class="text-gray-800 whitespace-pre-line wrap-any">' + linkify(a.contact) + '</div>';
+  var edited = !!edits[a.id];
+  h += '<div><div class="flex items-center gap-2 mb-1"><span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Contact</span>' +
+    (edited ? '<span class="chip bg-purple-50 text-purple-700">edited</span>' : '') +
+    (editingContact[a.id] ? '' : '<button onclick="toggleContactEdit(\'' + id + '\')" class="text-xs text-purple-700 underline">Edit</button>') + '</div>';
+  if (editingContact[a.id]) {
+    h += '<textarea id="contact-' + id + '" rows="3" class="w-full px-3 py-2 border border-purple-200 rounded-lg text-sm">' + esc(contactOf(a)) + '</textarea>';
+    h += '<div class="flex flex-wrap gap-2 mt-1.5"><button onclick="saveContact(\'' + id + '\')" class="px-3 py-1 bg-purple-700 text-white text-xs rounded-lg hover:bg-purple-800">Save</button>' +
+      '<button onclick="toggleContactEdit(\'' + id + '\')" class="px-3 py-1 bg-gray-100 text-gray-600 text-xs rounded-lg hover:bg-gray-200">Cancel</button>' +
+      (edited ? '<button onclick="resetContact(\'' + id + '\')" class="px-3 py-1 text-xs text-gray-500 underline">Back to original</button>' : '') + '</div>';
+  } else {
+    h += '<div class="text-gray-800 whitespace-pre-line wrap-any">' + linkify(contactOf(a)) + '</div>';
+  }
   if (a.source) h += '<details class="mt-1.5"><summary class="text-xs text-gray-400 cursor-pointer">Where this came from</summary><div class="text-xs text-gray-500 mt-1 wrap-any">' + esc(a.source) + '</div></details>';
   h += '</div>';
   h += '<div><div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Notes</div><div class="text-gray-700 wrap-any">' + esc(a.notes) + '</div></div>';
@@ -477,6 +518,9 @@ function card(a) {
   h += trackRow(a, 'sent', 'First email', 'Mark sent', 'markSent', true);
   h += trackRow(a, 'follow', 'Follow-up', 'Mark follow-up sent', 'markFollow', !!s.sent);
   h += trackRow(a, 'replied', 'Reply', 'Got a reply', 'markReplied', !!s.sent);
+  h += '<div class="flex items-center gap-2 min-h-[34px]"><div class="w-24 text-xs font-semibold text-gray-500 uppercase tracking-wide">Skip</div>' +
+    (s.skipped ? '<span class="text-sm text-gray-600">Skipped ' + niceDate(s.skipped) + '</span><button onclick="unskip(\'' + id + '\')" class="text-xs text-gray-400 hover:text-purple-700 underline">Undo</button>'
+               : '<button onclick="markSkipped(\'' + id + '\')" class="px-3 py-1.5 bg-white border border-gray-300 text-gray-600 text-xs rounded-lg hover:bg-gray-50">Skip this one</button>') + '</div>';
   h += '<textarea rows="1" placeholder="Your notes (what they said, what to do next)" onchange="saveNote(\'' + id + '\', this.value)" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">' + esc(s.note || '') + '</textarea>';
   h += '</div>';
 
