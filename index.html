@@ -529,7 +529,7 @@ function card(a) {
   return h;
 }
 
-var FOLLOW_UP_BODY = "Following up on behalf of every pup who's ever waited (im)patiently for a treat!\n\nIf TreatTeek could be a fit for your holiday guide, I'd love to send you one to try. Happy to share photos or set up a reader discount code too!";
+var FOLLOW_UP_BODY = "Following up on behalf of every pup who's ever waited (im)patiently for a treat!\n\nIf TreatTeek could be a fit for your holiday guide, I'd love to send you one to try. Happy to share photos or set up a reader discount code too!\n\nSincerely,\nTaly";
 function followUpText(a) {
   var first = (a.email || '').split('\n')[0];
   var greet = /^Hi\b/.test(first) ? first : 'Hi there,';
